@@ -2,32 +2,34 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>CSAF Visualizer & Merger</title>
+  <title>CSAF Report Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; background: #f9f9f9; }
-    h1 { color: #333; }
-    .section { margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);}
-    ul { margin: 0; padding-left: 20px; }
-    li { margin-bottom: 5px; }
-    .vuln { margin-bottom: 15px; }
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6f8; }
+    h1 { color: #222; }
+    .section { margin-bottom: 25px; padding: 20px; background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);}
+    h2 { border-bottom: 2px solid #eee; padding-bottom: 5px; margin-bottom: 15px; }
+    h3 { margin-top: 20px; }
+    .meta { font-size: 0.9em; color: #444; margin-bottom: 10px; }
+    .vuln { margin-bottom: 25px; }
+    table { border-collapse: collapse; margin-top: 10px; }
+    td, th { border: 1px solid #ccc; padding: 6px 10px; }
+    th { background: #eee; }
+    ul { padding-left: 18px; }
     button { padding: 8px 15px; margin-top: 10px; cursor: pointer; }
   </style>
 </head>
 <body>
-  <h1>CSAF Visualizer & Merger</h1>
+  <h1>CSAF Report Viewer</h1>
 
   <div class="section">
-    <h2>Upload CSAF JSON(s)</h2>
+    <h2>Upload CSAF JSON</h2>
     <input type="file" id="fileInput" accept=".json" multiple>
-    <button onclick="processFiles()">Process Files</button>
+    <button onclick="processFiles()">Generate Reports</button>
     <button onclick="downloadCombined()">Download Combined CSAF</button>
   </div>
 
-  <div class="section">
-    <h2>Extracted Data</h2>
-    <div id="output">No data yet.</div>
-  </div>
+  <div id="reports"></div>
 
   <script>
     let allDocuments = [];
@@ -35,14 +37,14 @@
     async function processFiles() {
       const files = document.getElementById('fileInput').files;
       allDocuments = [];
-      document.getElementById("output").innerHTML = "";
+      document.getElementById("reports").innerHTML = "";
 
       for (let file of files) {
         const text = await file.text();
         try {
           const json = JSON.parse(text);
           allDocuments.push(json);
-          displayData(json);
+          renderReport(json);
         } catch (err) {
           alert(`Error parsing ${file.name}: ${err}`);
         }
@@ -58,100 +60,48 @@
       return ids.map(id => map[id] || id);
     }
 
-    function displayData(doc) {
-      const out = document.getElementById('output');
-      const docTitle = doc.document?.title || "Untitled";
-      const publisher = doc.document?.publisher?.name || "Unknown";
-      const vulnerabilities = doc.vulnerabilities || [];
-
-      let html = `
-        <h3>${docTitle}</h3>
-        <p><b>Publisher:</b> ${publisher}</p>
-        <p><b>Vulnerabilities:</b> ${vulnerabilities.length}</p>
-      `;
-
-      for (let v of vulnerabilities) {
-        const affected = [];
-        if (v.product_status) {
-          for (let status of Object.keys(v.product_status)) {
-            const products = resolveProducts(doc, v.product_status[status]);
-            if (products.length) {
-              affected.push(`<b>${status}:</b> ${products.join(", ")}`);
-            }
-          }
-        }
-
-        html += `
-          <div class="vuln">
-            <p><b>${v.cve || "No CVE"}:</b> ${v.title || ""} (${v.cwe?.id || ""})</p>
-            <ul>${affected.map(a => `<li>${a}</li>`).join("")}</ul>
-          </div>
-        `;
-      }
-
-      out.innerHTML += html + "<hr/>";
+    function getNote(notes, category) {
+      if (!notes) return null;
+      const n = notes.find(n => n.category === category);
+      return n ? n.text : null;
     }
 
-    function downloadCombined() {
-      if (allDocuments.length === 0) {
-        alert("No documents to combine!");
-        return;
-      }
+    function renderReport(doc) {
+      const container = document.getElementById("reports");
+      const d = doc.document || {};
+      const tracking = d.tracking || {};
+      const publisher = d.publisher || {};
 
-      // Merge product trees and vulnerabilities
-      let allProducts = [];
-      let allVulns = [];
-      for (let doc of allDocuments) {
-        if (doc.product_tree?.full_product_names) {
-          allProducts.push(...doc.product_tree.full_product_names);
-        }
-        if (doc.vulnerabilities) {
-          allVulns.push(...doc.vulnerabilities);
-        }
-      }
+      let html = `<div class="section">
+        <h2>${d.title || "Untitled Advisory"}</h2>
+        <div class="meta">
+          <b>Publisher:</b> ${publisher.name || "Unknown"} &nbsp; 
+          <b>Category:</b> ${d.category || ""}<br>
+          <b>Initial release:</b> ${tracking.initial_release_date || ""} &nbsp;
+          <b>Current release:</b> ${tracking.current_release_date || ""}<br>
+          <b>Status:</b> ${tracking.status || ""} &nbsp; 
+          <b>Version:</b> ${tracking.version || ""}<br>
+          <b>Engine:</b> ${tracking.generator?.engine?.name || ""} ${tracking.generator?.engine?.version || ""}
+        </div>`;
 
-      const combined = {
-        document: {
-          category: "csaf_security_advisory",
-          csaf_version: "2.0",
-          publisher: {
-            category: "user",
-            name: "CSAF Visualizer",
-            namespace: "https://example.com"
-          },
-          title: "Combined CSAF Advisories",
-          tracking: {
-            id: "combined-" + Date.now(),
-            status: "draft",
-            version: "1",
-            current_release_date: new Date().toISOString(),
-            initial_release_date: new Date().toISOString(),
-            revision_history: [
-              { number: "1", date: new Date().toISOString(), summary: "Initial combined document" }
-            ]
-          }
-        },
-        product_tree: { full_product_names: dedup(allProducts, "product_id") },
-        vulnerabilities: allVulns
-      };
+      // Notes
+      const summary = getNote(d.notes, "summary");
+      if (summary) html += `<h3>Summary</h3><p>${summary}</p>`;
 
-      const blob = new Blob([JSON.stringify(combined, null, 2)], {type: "application/json"});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "combined_csaf.json";
-      a.click();
-      URL.revokeObjectURL(url);
-    }
+      const general = getNote(d.notes, "general");
+      if (general) html += `<h3>General Recommendations</h3><p>${general}</p>`;
 
-    function dedup(arr, key) {
-      const seen = new Set();
-      return arr.filter(item => {
-        if (seen.has(item[key])) return false;
-        seen.add(item[key]);
-        return true;
-      });
-    }
-  </script>
-</body>
-</html>
+      const legal = getNote(d.notes, "legal_disclaimer");
+      if (legal) html += `<h3>Disclaimer</h3><p>${legal}</p>`;
+
+      // Vulnerabilities
+      const vulns = doc.vulnerabilities || [];
+      if (vulns.length) {
+        html += `<h3>Vulnerabilities</h3>`;
+        for (let v of vulns) {
+          html += `<div class="vuln">
+            <b>${v.cve || "No CVE"}:</b> ${v.title || ""}<br>
+            <b>CWE:</b> ${v.cwe?.id || ""}: ${v.cwe?.name || ""}<br>`;
+
+          // Vulnerability summary note
+          const vsummary = getNote(v.notes, "summary");
